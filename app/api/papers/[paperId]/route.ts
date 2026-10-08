@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { errorResponse, successResponse, corsHeaders, handleCORS, getAuthUser } from '@/lib/utils';
-import { Role } from '@prisma/client';
+import { Role, Review } from '@prisma/client';
 
 export async function OPTIONS(request: NextRequest) {
   return handleCORS(request) || new Response(null, { headers: corsHeaders() });
@@ -9,8 +9,9 @@ export async function OPTIONS(request: NextRequest) {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { paperId: string } }
+  { params }: { params: Promise<{ paperId: string }> }
 ) {
+  const { paperId } = await params;
   try {
     const user = await getAuthUser(request);
     if (!user) {
@@ -18,7 +19,7 @@ export async function GET(
     }
 
     const paper = await prisma.paper.findUnique({
-      where: { id: params.paperId },
+      where: { id: paperId },
       include: {
         author: {
           select: { id: true, email: true, name: true },
@@ -36,7 +37,7 @@ export async function GET(
     // Access control
     const isAuthor = paper.submittedBy === user.id;
     const isEditorOrAdmin = [Role.EDITOR, Role.ADMIN].includes(user.role as Role);
-    const isReviewer = paper.reviews.some((r) => r.reviewerId === user.id);
+    const isReviewer = paper.reviews.some((r: Review) => r.reviewerId === user.id);
 
     if (!isAuthor && !isEditorOrAdmin && !isReviewer) {
       return errorResponse('Forbidden', 403);

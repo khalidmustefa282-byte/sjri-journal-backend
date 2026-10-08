@@ -35,8 +35,8 @@ export async function GET(request: NextRequest) {
 
     const uniqueCountries = new Set(
       papers
-        .map((p) => p.author.country)
-        .filter((c) => c)
+        .map((p: any) => p.author.country)
+        .filter((c: string | null) => c)
     );
 
     const countriesCount = uniqueCountries.size;
@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
     const avgDecisionDays =
       decisions.length > 0
         ? Math.round(
-            decisions.reduce((acc, d) => {
+            decisions.reduce((acc: number, d: any) => {
               const days = Math.floor(
                 (d.decisionDate.getTime() - d.paper.submissionDate.getTime()) /
                   (1000 * 60 * 60 * 24)
