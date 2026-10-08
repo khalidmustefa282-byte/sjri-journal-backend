@@ -1,0 +1,156 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String     @id @default(cuid())
+  email     String     @unique
+  password  String
+  name      String
+  role      Role       @default(AUTHOR)
+  affiliation String?
+  country   String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  // Relations
+  papers    Paper[]    @relation("Author")
+  submittedBy Paper[]  @relation("Submitter")
+  reviews   Review[]
+  decisions EditorialDecision[]
+}
+
+enum Role {
+  AUTHOR
+  EDITOR
+  REVIEWER
+  ADMIN
+}
+
+model Paper {
+  id          String     @id @default(cuid())
+  title       String
+  abstract    String     @db.Text
+  keywords    String[]
+  authors     Json       // Array of author objects
+  field       String
+  pdfUrl      String?
+  pdfFileName String?
+
+  // Author tracking
+  submittedBy String
+  author      User       @relation("Author", fields: [submittedBy], references: [id], onDelete: Cascade)
+
+  // Submission tracking
+  submissionDate DateTime  @default(now())
+  publishedDate  DateTime?
+  doi            String?
+  volume         Int?
+  issue          Int?
+  pages          String?
+
+  // Status
+  status      PaperStatus @default(DRAFT)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Relations
+  submissions Submission[]
+  reviews     Review[]
+  decisions   EditorialDecision[]
+}
+
+enum PaperStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  REVISIONS_REQUESTED
+  REVISIONS_SUBMITTED
+  ACCEPTED
+  REJECTED
+  SCHEDULED
+  PUBLISHED
+}
+
+model Submission {
+  id              String   @id @default(cuid())
+  paperId         String
+  paper           Paper    @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  version         String   // v1, v2, etc.
+  submissionDate  DateTime @default(now())
+  status          SubmissionStatus @default(PENDING)
+  notes           String?  @db.Text
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([paperId, version])
+}
+
+enum SubmissionStatus {
+  PENDING
+  RECEIVED
+  UNDER_REVIEW
+  REVIEW_COMPLETE
+}
+
+model Review {
+  id              String   @id @default(cuid())
+  paperId         String
+  paper           Paper    @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  reviewerId      String
+  reviewer        User     @relation(fields: [reviewerId], references: [id], onDelete: Cascade)
+  decision        ReviewDecision @default(PENDING)
+  comments        String?  @db.Text
+  rating          Int?     // 1-5
+  submittedDate   DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([paperId, reviewerId])
+}
+
+enum ReviewDecision {
+  ACCEPT
+  REJECT
+  REQUEST_REVISIONS
+  PENDING
+}
+
+model EditorialDecision {
+  id              String   @id @default(cuid())
+  paperId         String
+  paper           Paper    @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  decisionType    Decision
+  decidedBy       String
+  editor          User     @relation(fields: [decidedBy], references: [id], onDelete: Cascade)
+  decisionDate    DateTime @default(now())
+  notes           String?  @db.Text
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+enum Decision {
+  ACCEPT
+  REJECT
+  REQUEST_REVISIONS
+  PUBLISH
+  SCHEDULE
+}
+
+model PublicationIssue {
+  id              String   @id @default(cuid())
+  volume          Int
+  issue           Int
+  year            Int
+  publishedDate   DateTime
+  description     String?  @db.Text
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([volume, issue, year])
+}
