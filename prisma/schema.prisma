@@ -20,7 +20,6 @@ model User {
 
   // Relations
   papers    Paper[]    @relation("Author")
-  submittedBy Paper[]  @relation("Submitter")
   reviews   Review[]
   decisions EditorialDecision[]
 }

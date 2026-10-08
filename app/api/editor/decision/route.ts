@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { errorResponse, successResponse, corsHeaders, handleCORS, checkRole } from '@/lib/utils';
-import { Role, Decision } from '@prisma/client';
+import { Role, Decision, PaperStatus } from '@prisma/client';
 
 export async function OPTIONS(request: NextRequest) {
   return handleCORS(request) || new Response(null, { headers: corsHeaders() });
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     });
 
     // Update paper status based on decision
-    let newStatus = 'SUBMITTED';
+    let newStatus: PaperStatus = 'SUBMITTED';
     if (decision === 'ACCEPT') newStatus = 'ACCEPTED';
     if (decision === 'REJECT') newStatus = 'REJECTED';
     if (decision === 'REQUEST_REVISIONS') newStatus = 'REVISIONS_REQUESTED';

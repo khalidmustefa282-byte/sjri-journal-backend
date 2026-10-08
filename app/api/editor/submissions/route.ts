@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { errorResponse, successResponse, corsHeaders, handleCORS, checkRole } from '@/lib/utils';
-import { Role } from '@prisma/client';
+import { Role, PaperStatus } from '@prisma/client';
 
 export async function OPTIONS(request: NextRequest) {
   return handleCORS(request) || new Response(null, { headers: corsHeaders() });
@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
 
-    const where = status ? { status } : undefined;
+    const where = status ? { status: status as PaperStatus } : undefined;
 
     const papers = await prisma.paper.findMany({
       where,

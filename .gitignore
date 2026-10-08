@@ -15,3 +15,7 @@ dist/
 *.swo
 *~
 .eslintcache
+
+# Uploaded files
+.uploads/
+*.tsbuildinfo

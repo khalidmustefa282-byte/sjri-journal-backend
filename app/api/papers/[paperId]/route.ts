@@ -36,7 +36,7 @@ export async function GET(
 
     // Access control
     const isAuthor = paper.submittedBy === user.id;
-    const isEditorOrAdmin = [Role.EDITOR, Role.ADMIN].includes(user.role as Role);
+    const isEditorOrAdmin = ([Role.EDITOR, Role.ADMIN] as Role[]).includes(user.role as Role);
     const isReviewer = paper.reviews.some((r: Review) => r.reviewerId === user.id);
 
     if (!isAuthor && !isEditorOrAdmin && !isReviewer) {
