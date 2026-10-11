@@ -116,6 +116,14 @@ r = await call('PATCH', `/api/admin/users/${other.id}`, { token: admin.token, js
 ok(r.status === 200 && r.data.user.role === 'REVIEWER', 'admin changes a role');
 r = await call('PATCH', `/api/admin/users/${other.id}`, { token: admin.token, json: { role: 'AUTHOR' } });
 ok(r.data.user?.role === 'AUTHOR', 'admin changes it back');
+r = await call('PATCH', `/api/admin/users/${other.id}`, { token: admin.token, json: { password: 'brand-new-pass' } });
+ok(r.status === 200, 'admin sets a new password', r.data);
+r = await call('POST', '/api/auth/token', { json: { email: 'other@smoke.localhost', password: 'brand-new-pass' } });
+ok(r.status === 200, 'user logs in with the new password');
+r = await call('PATCH', `/api/admin/users/${other.id}`, { token: admin.token, json: { password: 'short' } });
+ok(r.status === 400, 'short new password rejected');
+r = await call('PATCH', `/api/admin/users/${other.id}`, { token: author.token, json: { password: 'hijack-password' } });
+ok(r.status === 403, 'non-admin cannot set passwords');
 r = await call('GET', '/api/editor/dashboard', { token: rev1.token });
 ok(r.status === 403, 'reviewer cannot open editor dashboard');
 
