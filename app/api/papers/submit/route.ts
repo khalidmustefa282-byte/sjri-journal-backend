@@ -1,75 +1,46 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { errorResponse, successResponse, corsHeaders, handleCORS, getAuthUser, checkRole } from '@/lib/utils';
-import { Role } from '@prisma/client';
+import { authorPaper, parseAuthorsField, parseKeywords } from '@/lib/papers';
+import { savePdf, validatePdf } from '@/lib/storage';
+import { HttpError, handleError, readForm, requireUser, str, successResponse } from '@/lib/utils';
 
-export async function OPTIONS(request: NextRequest) {
-  return handleCORS(request) || new Response(null, { headers: corsHeaders() });
-}
-
+// Author submits a new manuscript (multipart form with a PDF).
 export async function POST(request: NextRequest) {
   try {
-    // Check authentication
-    const user = await getAuthUser(request);
-    if (!user) {
-      return errorResponse('Unauthorized', 401);
-    }
+    const user = await requireUser(request);
+    const form = await readForm(request);
 
-    // Parse form data
-    const formData = await request.formData();
-    const title = formData.get('title') as string;
-    const abstract = formData.get('abstract') as string;
-    const keywords = formData.get('keywords') as string;
-    const authors = formData.get('authors') as string;
-    const field = formData.get('field') as string;
-    const pdfFile = formData.get('pdf') as File;
+    const title = str(form.get('title'), 300);
+    const abstract = str(form.get('abstract'), 10000);
+    const field = str(form.get('field'), 120);
+    const keywords = parseKeywords(form.get('keywords'));
+    const authors = parseAuthorsField(form.get('authors'));
 
-    // Validation
-    if (!title || !abstract || !keywords || !authors || !field) {
-      return errorResponse('Missing required fields');
-    }
+    if (!title || !abstract || !field) throw new HttpError('Title, abstract and research field are required.');
+    if (!keywords.length) throw new HttpError('Add at least one keyword.');
+    if (!authors) throw new HttpError('Add at least one author with a name.');
+    const pdf = validatePdf(form.get('pdf'), true)!;
 
-    // Validate PDF
-    if (pdfFile) {
-      if (!pdfFile.type.includes('pdf')) {
-        return errorResponse('File must be a PDF');
-      }
-      if (pdfFile.size > 50 * 1024 * 1024) {
-        return errorResponse('File must be less than 50MB');
-      }
-    }
+    const pdfUrl = await savePdf(pdf, 'submissions');
 
-    // Create paper
     const paper = await prisma.paper.create({
       data: {
         title,
         abstract,
-        keywords: keywords.split(',').map((k) => k.trim()),
-        authors: JSON.parse(authors),
+        keywords,
+        authors,
         field,
-        pdfFileName: pdfFile?.name,
+        pdfUrl,
+        pdfFileName: pdf.name.slice(0, 200),
         submittedBy: user.id,
         status: 'SUBMITTED',
+        submissions: { create: { version: 'v1', status: 'RECEIVED' } },
       },
-      include: {
-        author: {
-          select: { id: true, email: true, name: true, role: true },
-        },
-      },
+      include: { submissions: true },
     });
 
-    // Create submission record
-    await prisma.submission.create({
-      data: {
-        paperId: paper.id,
-        version: 'v1',
-        status: 'RECEIVED',
-      },
-    });
-
-    return successResponse({ paper }, 201);
+    return successResponse({ paper: authorPaper(paper) }, 201);
   } catch (error) {
-    console.error('Paper submission error:', error);
-    return errorResponse('Internal server error', 500);
+    return handleError(error, 'Paper submission error');
   }
 }

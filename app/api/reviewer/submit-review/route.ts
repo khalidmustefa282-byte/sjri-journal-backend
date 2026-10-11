@@ -1,66 +1,36 @@
 import { NextRequest } from 'next/server';
+import { ReviewDecision } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { errorResponse, successResponse, corsHeaders, handleCORS, getAuthUser } from '@/lib/utils';
-import { Role } from '@prisma/client';
+import { HttpError, handleError, optionalInt, readJson, requireUser, str, successResponse } from '@/lib/utils';
 
-export async function OPTIONS(request: NextRequest) {
-  return handleCORS(request) || new Response(null, { headers: corsHeaders() });
-}
+const REVIEWABLE = ['UNDER_REVIEW', 'REVISIONS_SUBMITTED', 'SUBMITTED'];
 
+// A reviewer submits (or updates) their review. Only for papers they were assigned to.
 export async function POST(request: NextRequest) {
   try {
-    const user = await getAuthUser(request);
-    if (!user) {
-      return errorResponse('Unauthorized', 401);
-    }
+    const user = await requireUser(request, ['REVIEWER', 'ADMIN']);
+    const body = await readJson(request);
+    const paperId = typeof body.paperId === 'string' ? body.paperId : '';
+    const decision = body.decision as ReviewDecision;
+    if (!paperId || !decision) throw new HttpError('paperId and decision are required.');
+    if (!['ACCEPT', 'REJECT', 'REQUEST_REVISIONS'].includes(decision)) throw new HttpError('Recommendation must be accept, reject or request revisions.');
+    const comments = str(body.comments, 20000);
+    if (!comments) throw new HttpError('Please write your comments for the editor and author.');
+    const rating = optionalInt(body.rating, 'Rating', 1, 5);
 
-    if (user.role !== Role.REVIEWER && user.role !== Role.ADMIN) {
-      return errorResponse('Forbidden', 403);
-    }
-
-    const body = await request.json();
-    const { paperId, decision, comments, rating } = body;
-
-    if (!paperId || !decision) {
-      return errorResponse('paperId and decision are required');
-    }
-
-    // Verify paper exists
-    const paper = await prisma.paper.findUnique({
-      where: { id: paperId },
+    const assignment = await prisma.review.findUnique({
+      where: { paperId_reviewerId: { paperId, reviewerId: user.id } },
+      include: { paper: { select: { status: true } } },
     });
+    if (!assignment) throw new HttpError('You have not been assigned to review this paper.', 403);
+    if (!REVIEWABLE.includes(assignment.paper.status)) throw new HttpError('This paper is no longer open for review.', 409);
 
-    if (!paper) {
-      return errorResponse('Paper not found', 404);
-    }
-
-    // Create or update review
-    const review = await prisma.review.upsert({
-      where: {
-        paperId_reviewerId: {
-          paperId,
-          reviewerId: user.id,
-        },
-      },
-      create: {
-        paperId,
-        reviewerId: user.id,
-        decision,
-        comments: comments || null,
-        rating: rating || null,
-        submittedDate: new Date(),
-      },
-      update: {
-        decision,
-        comments: comments || null,
-        rating: rating || null,
-        submittedDate: new Date(),
-      },
+    const review = await prisma.review.update({
+      where: { id: assignment.id },
+      data: { decision, comments, rating, submittedDate: new Date() },
     });
-
     return successResponse({ review }, 201);
   } catch (error) {
-    console.error('Submit review error:', error);
-    return errorResponse('Internal server error', 500);
+    return handleError(error, 'Submit review error');
   }
 }
