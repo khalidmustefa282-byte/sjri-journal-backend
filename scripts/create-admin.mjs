@@ -12,12 +12,40 @@ import { stdin as input, stdout as output } from 'node:process';
 const rl = readline.createInterface({ input, output });
 const email = (process.env.ADMIN_EMAIL || (await rl.question('Admin email: '))).trim().toLowerCase();
 const name = (process.env.ADMIN_NAME || (await rl.question('Full name: '))).trim();
-const password = process.env.ADMIN_PASSWORD || (await rl.question('New password (min 12 characters): '));
+
+// Hide the password while typing (nothing appears on screen).
+async function askHidden(question) {
+  let muted = false;
+  const write = rl._writeToOutput?.bind(rl);
+  rl._writeToOutput = (text) => {
+    if (!muted || text.includes('\n')) write?.(muted ? '\n' : text);
+  };
+  const promise = rl.question(question);
+  muted = true;
+  const answer = await promise;
+  muted = false;
+  rl._writeToOutput = write;
+  return answer;
+}
+
+let password = process.env.ADMIN_PASSWORD || '';
+if (!password) {
+  password = await askHidden('New password (min 12 characters, hidden while typing): ');
+  const again = await askHidden('Type the same password again: ');
+  if (again !== password) {
+    rl.close();
+    console.error('The two passwords are different. Nothing was changed. Please run npm run create-admin again.');
+    process.exit(1);
+  }
+}
 rl.close();
 
 if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('That is not a valid email address.');
 if (!name) throw new Error('Name is required.');
-if (password.length < 12) throw new Error('Password must be at least 12 characters.');
+if (password.length < 12) {
+  console.error(`That password has ${password.length} characters. It needs at least 12. Nothing was changed. Please run npm run create-admin again.`);
+  process.exit(1);
+}
 
 const prisma = new PrismaClient();
 const hash = await bcrypt.hash(password, 10);
