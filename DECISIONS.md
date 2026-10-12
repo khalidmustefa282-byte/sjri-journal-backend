@@ -37,3 +37,9 @@ Each one can be changed later. (Same file in the backend and frontend repos.)
 21. All work is on `release/publish-ready` in both repos. `main` was not touched.
 22. The frontend's untracked `package-lock.json` was left uncommitted. Vercel installs with `bun.lock`, and no frontend packages were added.
 23. Backend commits were grouped by area (security scripts, then API, then tests, then docs) instead of one commit per task. The API security fixes and new endpoints share the same helper files, so they were built and tested together (81/81 smoke checks).
+
+## Update: Word submissions (client request, 12 October 2026)
+24. **Authors submit Word documents (.doc / .docx), not PDF.** The editor checks and corrects the Word file, converts it to PDF, and uploads the final PDF when publishing. Revisions are also Word.
+25. **Only PDFs are ever shown on the public website.** Publishing an accepted paper requires the final PDF; the author's Word file is never served publicly.
+26. Uploaded files are checked by their real file signature (not just the name), max 4.4 MB.
+27. To avoid a risky database change on the live site, the paper's "current file" field is reused: it holds the Word manuscript during review and the final PDF after publication. Earlier versions stay listed in the version history (dates and notes); the Word original is replaced by the PDF at publication, so editors should keep their corrected Word copy.

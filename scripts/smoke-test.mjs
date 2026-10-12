@@ -50,6 +50,9 @@ async function call(method, path, { token, json, form, origin = ORIGIN } = {}) {
 
 const pdf = (name = 'paper.pdf') =>
   new File([Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF')], name, { type: 'application/pdf' });
+// Minimal bytes with the .docx (ZIP) signature; enough for the server's file-type check.
+const DOCX_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const docx = (name = 'paper.docx') => new File([Buffer.from('PK\u0003\u0004word/document.xml test')], name, { type: DOCX_TYPE });
 
 const { default: pg } = await import('pg');
 const db = new pg.Client({ connectionString: DB });
@@ -134,9 +137,9 @@ f.set('abstract', 'Abstract text');
 f.set('keywords', 'water, juba, water');
 f.set('field', 'Public Health');
 f.set('authors', JSON.stringify([{ name: 'Author A', email: 'a@x.com', affiliation: 'University of Juba', corresponding: true }]));
-f.set('pdf', pdf());
+f.set('file', docx());
 r = await call('POST', '/api/papers/submit', { token: author.token, form: f });
-ok(r.status === 201 && r.data.paper.status === 'SUBMITTED' && r.data.paper.hasPdf, 'author submits paper with PDF', r.data);
+ok(r.status === 201 && r.data.paper.status === 'SUBMITTED' && r.data.paper.hasFile && r.data.paper.fileType === 'docx' && !r.data.paper.hasPdf, 'author submits paper as Word', r.data);
 const paperId = r.data.paper?.id;
 ok(JSON.stringify(r.data.paper?.keywords) === '["water","juba"]', 'keywords cleaned and de-duplicated', r.data.paper?.keywords);
 
@@ -146,10 +149,13 @@ f2.set('abstract', 'y');
 f2.set('keywords', 'k');
 f2.set('field', 'f');
 f2.set('authors', '[{"name":"A"}]');
-f2.set('pdf', new File([Buffer.from('hello')], 'fake.pdf', { type: 'application/pdf' }));
+f2.set('file', pdf());
 r = await call('POST', '/api/papers/submit', { token: author.token, form: f2 });
-ok(r.status === 400, 'file that is not really a PDF is rejected', r.data);
-f2.set('pdf', pdf());
+ok(r.status === 400 && /Word/.test(r.data.error), 'PDF manuscript rejected (Word required)', r.data);
+f2.set('file', new File([Buffer.from('hello')], 'fake.docx', { type: DOCX_TYPE }));
+r = await call('POST', '/api/papers/submit', { token: author.token, form: f2 });
+ok(r.status === 400, 'file that is not really a Word document is rejected', r.data);
+f2.set('file', docx());
 f2.set('authors', 'not json');
 r = await call('POST', '/api/papers/submit', { token: author.token, form: f2 });
 ok(r.status === 400, 'invalid authors list rejected', r.data);
@@ -161,7 +167,7 @@ ok(r.data.papers?.length === 1 && !('pdfUrl' in r.data.papers[0]), 'my submissio
 r = await call('GET', `/api/papers/${paperId}`, { token: other.token });
 ok(r.status === 404, "another author cannot open someone else's paper");
 r = await call('GET', `/api/papers/${paperId}/pdf`, { token: author.token });
-ok(r.status === 200 && r.headers.get('content-type') === 'application/pdf', 'author downloads own PDF', r.status);
+ok(r.status === 200 && r.headers.get('content-type') === DOCX_TYPE && /attachment; filename=".*\.docx"/.test(r.headers.get('content-disposition')), 'author downloads own Word file', r.status);
 r = await call('GET', `/api/papers/${paperId}/pdf`, { token: other.token });
 ok(r.status === 404, "another author cannot download the PDF");
 r = await call('GET', `/api/publications/${paperId}`);
@@ -186,7 +192,7 @@ ok(r.data.assignments?.length === 1 && !('authors' in r.data.assignments[0]), 'r
 r = await call('GET', `/api/papers/${paperId}`, { token: rev1.token });
 ok(r.data.access === 'reviewer' && !r.data.paper.authors, 'reviewer paper view is anonymous', r.data);
 r = await call('GET', `/api/papers/${paperId}/pdf`, { token: rev1.token });
-ok(r.status === 200, 'assigned reviewer downloads PDF');
+ok(r.status === 200 && r.headers.get('content-type') === DOCX_TYPE, 'assigned reviewer downloads Word file');
 r = await call('POST', '/api/reviewer/submit-review', { token: rev1.token, json: { paperId, decision: 'MAYBE', comments: 'x' } });
 ok(r.status === 400, 'invalid recommendation rejected');
 r = await call('POST', '/api/reviewer/submit-review', { token: rev1.token, json: { paperId, decision: 'REQUEST_REVISIONS', comments: 'Please clarify methods', rating: 4 } });
@@ -207,12 +213,16 @@ ok(
 
 // --- Revision ---
 const rf = new FormData();
-rf.set('pdf', pdf('rev.pdf'));
+rf.set('file', docx('rev.docx'));
 rf.set('notes', 'Fixed');
 r = await call('POST', `/api/papers/${paperId}/revision`, { token: other.token, form: rf });
 ok(r.status === 404, 'another author cannot upload a revision');
+const rfPdf = new FormData();
+rfPdf.set('file', pdf('rev.pdf'));
+r = await call('POST', `/api/papers/${paperId}/revision`, { token: author.token, form: rfPdf });
+ok(r.status === 400, 'PDF revision rejected (Word required)', r.data);
 const rf2 = new FormData();
-rf2.set('pdf', pdf('rev.pdf'));
+rf2.set('file', docx('rev.docx'));
 rf2.set('notes', 'Fixed');
 r = await call('POST', `/api/papers/${paperId}/revision`, { token: author.token, form: rf2 });
 ok(r.status === 201 && r.data.paper.status === 'REVISIONS_SUBMITTED' && r.data.paper.submissions.length === 2, 'author uploads revision (v2)', r.data);
@@ -244,8 +254,24 @@ ok(r.status === 403, 'author cannot use admin publish');
 r = await call('POST', '/api/admin/publish', { token: admin.token, form: pf });
 ok(r.status === 201 && r.data.paper.status === 'PUBLISHED', 'admin publishes a PDF directly', r.data);
 const oldId = r.data.paper?.id;
-r = await call('POST', '/api/editor/decision', { token: editor.token, json: { paperId, decision: 'PUBLISH', volume: 1, issue: 2, pages: '1-12', doi: '10.0000/test' } });
-ok(r.status === 201, 'editor publishes the scheduled paper', r.data);
+r = await call('POST', '/api/editor/decision', { token: editor.token, json: { paperId, decision: 'PUBLISH', volume: 1, issue: 2 } });
+ok(r.status === 409, 'cannot publish while the file is still the Word manuscript', r.data);
+r = await call('GET', `/api/publications/${paperId}/pdf`);
+ok(r.status === 404, 'Word manuscript never served publicly');
+const fin = new FormData();
+fin.set('paperId', paperId);
+fin.set('volume', '1');
+fin.set('issue', '2');
+fin.set('pages', '1-12');
+fin.set('doi', '10.0000/test');
+r = await call('POST', '/api/admin/publish', { token: editor.token, form: fin });
+ok(r.status === 400, 'publishing an accepted paper requires the final PDF', r.data);
+fin.set('pdf', docx('final.docx'));
+r = await call('POST', '/api/admin/publish', { token: editor.token, form: fin });
+ok(r.status === 400, 'final file must be a PDF', r.data);
+fin.set('pdf', pdf('final.pdf'));
+r = await call('POST', '/api/admin/publish', { token: editor.token, form: fin });
+ok(r.status === 200 && r.data.paper.status === 'PUBLISHED' && r.data.paper.hasPdf, 'editor publishes the scheduled paper with its final PDF', r.data);
 
 // --- Public pages ---
 r = await call('GET', '/api/publications/current');

@@ -1,10 +1,10 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { authorPaper, parseAuthorsField, parseKeywords } from '@/lib/papers';
-import { savePdf, validatePdf } from '@/lib/storage';
+import { saveFile, validateManuscript } from '@/lib/storage';
 import { HttpError, handleError, readForm, requireUser, str, successResponse } from '@/lib/utils';
 
-// Author submits a new manuscript (multipart form with a PDF).
+// Author submits a new manuscript (multipart form with a Word document in the "file" field).
 export async function POST(request: NextRequest) {
   try {
     const user = await requireUser(request);
@@ -19,9 +19,9 @@ export async function POST(request: NextRequest) {
     if (!title || !abstract || !field) throw new HttpError('Title, abstract and research field are required.');
     if (!keywords.length) throw new HttpError('Add at least one keyword.');
     if (!authors) throw new HttpError('Add at least one author with a name.');
-    const pdf = validatePdf(form.get('pdf'), true)!;
+    const doc = validateManuscript(form);
 
-    const pdfUrl = await savePdf(pdf, 'submissions');
+    const pdfUrl = await saveFile(doc, 'submissions');
 
     const paper = await prisma.paper.create({
       data: {
@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
         authors,
         field,
         pdfUrl,
-        pdfFileName: pdf.name.slice(0, 200),
+        pdfFileName: doc.name.slice(0, 200),
         submittedBy: user.id,
         status: 'SUBMITTED',
         submissions: { create: { version: 'v1', status: 'RECEIVED' } },
