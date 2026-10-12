@@ -1,62 +1,42 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import { errorResponse, successResponse, corsHeaders, handleCORS } from '@/lib/utils';
+import { NextRequest } from 'next/server';
 import bcrypt from 'bcrypt';
-import { Role } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
+import { HttpError, handleError, isEmail, normalizeEmail, readJson, str, successResponse } from '@/lib/utils';
 
-export async function OPTIONS(request: NextRequest) {
-  return handleCORS(request) || new Response(null, { headers: corsHeaders() });
-}
+export const MIN_PASSWORD_LENGTH = 8;
 
+// Public registration always creates an AUTHOR account.
+// Any "role" sent by the browser is ignored on purpose; only an Admin can change roles
+// (PATCH /api/admin/users/[userId]).
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { email, password, name, role, affiliation, country } = body;
+    const body = await readJson(request);
+    const email = normalizeEmail(body.email);
+    const name = str(body.name, 120);
+    const password = typeof body.password === 'string' ? body.password : '';
 
-    // Validation
-    if (!email || !password || !name) {
-      return errorResponse('Email, password, and name are required');
-    }
+    if (!email || !password || !name) throw new HttpError('Name, email and password are required.');
+    if (!isEmail(email)) throw new HttpError('Please enter a valid email address.');
+    if (password.length < MIN_PASSWORD_LENGTH) throw new HttpError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+    if (password.length > 200) throw new HttpError('Password is too long.');
 
-    if (!Object.values(Role).includes(role || 'AUTHOR')) {
-      return errorResponse('Invalid role');
-    }
+    const existing = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } }, select: { id: true } });
+    if (existing) throw new HttpError('An account with this email already exists. Please log in instead.', 409);
 
-    // Check if user already exists
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
-    });
-
-    if (existingUser) {
-      return errorResponse('User already exists', 400);
-    }
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Create user
     const user = await prisma.user.create({
       data: {
         email,
-        password: hashedPassword,
+        password: await bcrypt.hash(password, 10),
         name,
-        role: role || 'AUTHOR',
-        affiliation: affiliation || null,
-        country: country || null,
+        role: 'AUTHOR',
+        affiliation: str(body.affiliation, 200) || null,
+        country: str(body.country, 80) || null,
       },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        affiliation: true,
-        country: true,
-      },
+      select: { id: true, email: true, name: true, role: true, affiliation: true, country: true },
     });
 
     return successResponse({ user }, 201);
   } catch (error) {
-    console.error('Registration error:', error);
-    return errorResponse('Internal server error', 500);
+    return handleError(error, 'Registration error');
   }
 }

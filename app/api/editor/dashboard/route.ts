@@ -1,44 +1,29 @@
 import { NextRequest } from 'next/server';
+import { PaperStatus } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { errorResponse, successResponse, corsHeaders, handleCORS, checkRole } from '@/lib/utils';
-import { Role } from '@prisma/client';
-
-export async function OPTIONS(request: NextRequest) {
-  return handleCORS(request) || new Response(null, { headers: corsHeaders() });
-}
+import { handleError, requireUser, successResponse } from '@/lib/utils';
 
 export async function GET(request: NextRequest) {
   try {
-    const roleCheck = await checkRole(request, [Role.EDITOR, Role.ADMIN]);
-    if (roleCheck.error) {
-      return errorResponse(roleCheck.error, roleCheck.status);
-    }
-
-    const [
-      total,
-      submitted,
-      underReview,
-      published,
-      scheduled,
-    ] = await Promise.all([
-      prisma.paper.count(),
-      prisma.paper.count({ where: { status: 'SUBMITTED' } }),
-      prisma.paper.count({ where: { status: 'UNDER_REVIEW' } }),
-      prisma.paper.count({ where: { status: 'PUBLISHED' } }),
-      prisma.paper.count({ where: { status: 'SCHEDULED' } }),
-    ]);
+    await requireUser(request, ['EDITOR', 'ADMIN']);
+    const grouped = await prisma.paper.groupBy({ by: ['status'], _count: { _all: true } });
+    const byStatus = Object.fromEntries(Object.values(PaperStatus).map((s) => [s, 0])) as Record<PaperStatus, number>;
+    for (const row of grouped) byStatus[row.status] = row._count._all;
+    const total = Object.values(byStatus).reduce((a, b) => a + b, 0);
+    const pendingReviews = await prisma.review.count({ where: { submittedDate: null } });
 
     return successResponse({
       stats: {
         total,
-        submitted,
-        underReview,
-        published,
-        scheduled,
+        submitted: byStatus.SUBMITTED,
+        underReview: byStatus.UNDER_REVIEW,
+        published: byStatus.PUBLISHED,
+        scheduled: byStatus.SCHEDULED,
+        pendingReviews,
+        byStatus,
       },
     });
   } catch (error) {
-    console.error('Dashboard error:', error);
-    return errorResponse('Internal server error', 500);
+    return handleError(error, 'Editor dashboard error');
   }
 }

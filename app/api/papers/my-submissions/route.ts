@@ -1,30 +1,22 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { errorResponse, successResponse, corsHeaders, handleCORS, getAuthUser } from '@/lib/utils';
-
-export async function OPTIONS(request: NextRequest) {
-  return handleCORS(request) || new Response(null, { headers: corsHeaders() });
-}
+import { authorPaper } from '@/lib/papers';
+import { handleError, requireUser, successResponse } from '@/lib/utils';
 
 export async function GET(request: NextRequest) {
   try {
-    const user = await getAuthUser(request);
-    if (!user) {
-      return errorResponse('Unauthorized', 401);
-    }
-
+    const user = await requireUser(request);
     const papers = await prisma.paper.findMany({
       where: { submittedBy: user.id },
       include: {
-        submissions: true,
-        reviews: true,
-        decisions: true,
+        submissions: { orderBy: { submissionDate: 'asc' } },
+        reviews: { orderBy: { createdAt: 'asc' } },
+        decisions: { orderBy: { decisionDate: 'asc' } },
       },
+      orderBy: { submissionDate: 'desc' },
     });
-
-    return successResponse({ papers });
+    return successResponse({ papers: papers.map(authorPaper) });
   } catch (error) {
-    console.error('Fetch submissions error:', error);
-    return errorResponse('Internal server error', 500);
+    return handleError(error, 'My submissions error');
   }
 }

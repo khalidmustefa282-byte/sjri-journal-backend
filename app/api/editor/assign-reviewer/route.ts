@@ -1,57 +1,36 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { errorResponse, successResponse, corsHeaders, handleCORS, checkRole } from '@/lib/utils';
-import { Role } from '@prisma/client';
+import { HttpError, handleError, readJson, requireUser, successResponse } from '@/lib/utils';
 
-export async function OPTIONS(request: NextRequest) {
-  return handleCORS(request) || new Response(null, { headers: corsHeaders() });
-}
+const ASSIGNABLE = ['SUBMITTED', 'UNDER_REVIEW', 'REVISIONS_SUBMITTED'];
 
 export async function POST(request: NextRequest) {
   try {
-    const roleCheck = await checkRole(request, [Role.EDITOR, Role.ADMIN]);
-    if (roleCheck.error) {
-      return errorResponse(roleCheck.error, roleCheck.status);
-    }
+    await requireUser(request, ['EDITOR', 'ADMIN']);
+    const body = await readJson(request);
+    const paperId = typeof body.paperId === 'string' ? body.paperId : '';
+    const reviewerIds = Array.isArray(body.reviewerIds) ? Array.from(new Set(body.reviewerIds.filter((id): id is string => typeof id === 'string'))) : [];
+    if (!paperId || reviewerIds.length === 0) throw new HttpError('Choose a paper and at least one reviewer.');
 
-    const body = await request.json();
-    const { paperId, reviewerIds, deadline } = body;
+    const paper = await prisma.paper.findUnique({ where: { id: paperId }, select: { id: true, status: true, submittedBy: true } });
+    if (!paper) throw new HttpError('Paper not found.', 404);
+    if (!ASSIGNABLE.includes(paper.status)) throw new HttpError('Reviewers can only be assigned to papers that are submitted or under review.', 409);
 
-    if (!paperId || !reviewerIds || !Array.isArray(reviewerIds)) {
-      return errorResponse('paperId and reviewerIds array are required');
-    }
+    const reviewers = await prisma.user.findMany({ where: { id: { in: reviewerIds }, role: 'REVIEWER' }, select: { id: true } });
+    if (reviewers.length !== reviewerIds.length) throw new HttpError('Every selected person must have a Reviewer account.');
+    if (reviewerIds.includes(paper.submittedBy)) throw new HttpError('An author cannot review their own paper.');
 
-    // Verify paper exists
-    const paper = await prisma.paper.findUnique({
-      where: { id: paperId },
+    const result = await prisma.$transaction(async (tx) => {
+      const existing = await tx.review.findMany({ where: { paperId, reviewerId: { in: reviewerIds } }, select: { reviewerId: true } });
+      const already = new Set(existing.map((r) => r.reviewerId));
+      const fresh = reviewerIds.filter((id) => !already.has(id));
+      if (fresh.length) await tx.review.createMany({ data: fresh.map((reviewerId) => ({ paperId, reviewerId, decision: 'PENDING' as const })) });
+      await tx.paper.update({ where: { id: paperId }, data: { status: 'UNDER_REVIEW' } });
+      return { assigned: fresh.length, alreadyAssigned: already.size };
     });
 
-    if (!paper) {
-      return errorResponse('Paper not found', 404);
-    }
-
-    // Create review records for each reviewer
-    const reviews = await Promise.all(
-      reviewerIds.map((reviewerId: string) =>
-        prisma.review.create({
-          data: {
-            paperId,
-            reviewerId,
-            decision: 'PENDING',
-          },
-        })
-      )
-    );
-
-    // Update paper status
-    await prisma.paper.update({
-      where: { id: paperId },
-      data: { status: 'UNDER_REVIEW' },
-    });
-
-    return successResponse({ reviews, message: 'Reviewers assigned' }, 201);
+    return successResponse({ ...result, message: 'Reviewers assigned' }, 201);
   } catch (error) {
-    console.error('Assign reviewer error:', error);
-    return errorResponse('Internal server error', 500);
+    return handleError(error, 'Assign reviewer error');
   }
 }

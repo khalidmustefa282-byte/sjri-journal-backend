@@ -1,80 +1,45 @@
-import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { errorResponse, successResponse, corsHeaders, handleCORS } from '@/lib/utils';
+import { normalizeAuthors } from '@/lib/papers';
+import { handleError, successResponse } from '@/lib/utils';
 
-export async function OPTIONS(request: NextRequest) {
-  return handleCORS(request) || new Response(null, { headers: corsHeaders() });
-}
+export const dynamic = 'force-dynamic';
 
-export async function GET(request: NextRequest) {
+// Real homepage numbers, calculated from the database.
+export async function GET() {
   try {
-    const currentYear = new Date().getFullYear();
-    const currentYearStart = new Date(currentYear, 0, 1);
-    const currentYearEnd = new Date(currentYear, 11, 31);
-
-    // Papers published this year
+    const year = new Date().getUTCFullYear();
     const papersThisYear = await prisma.paper.count({
-      where: {
-        status: 'PUBLISHED',
-        publishedDate: {
-          gte: currentYearStart,
-          lte: currentYearEnd,
-        },
-      },
+      where: { status: 'PUBLISHED', publishedDate: { gte: new Date(Date.UTC(year, 0, 1)), lt: new Date(Date.UTC(year + 1, 0, 1)) } },
     });
+    const totalPublished = await prisma.paper.count({ where: { status: 'PUBLISHED' } });
 
-    // Unique countries from authors
-    const papers = await prisma.paper.findMany({
-      where: { status: 'PUBLISHED' },
-      select: {
-        author: {
-          select: { country: true },
-        },
-      },
+    // Countries of the people who submitted published papers (direct publications by the office are skipped).
+    const published = await prisma.paper.findMany({
+      where: { status: 'PUBLISHED', author: { role: 'AUTHOR' } },
+      select: { author: { select: { country: true } } },
     });
+    const countriesCount = new Set(published.map((p) => p.author.country?.trim().toLowerCase()).filter(Boolean)).size;
 
-    const uniqueCountries = new Set(
-      papers
-        .map((p: any) => p.author.country)
-        .filter((c: string | null) => c)
+    // Average days from submission to the first editorial decision.
+    const decided = await prisma.paper.findMany({
+      where: { decisions: { some: { decisionType: { in: ['ACCEPT', 'REJECT', 'REQUEST_REVISIONS'] } } } },
+      select: { submissionDate: true, decisions: { where: { decisionType: { in: ['ACCEPT', 'REJECT', 'REQUEST_REVISIONS'] } }, orderBy: { decisionDate: 'asc' }, take: 1, select: { decisionDate: true } } },
+    });
+    const days = decided
+      .map((p) => (p.decisions[0]!.decisionDate.getTime() - p.submissionDate.getTime()) / 86400000)
+      .filter((d) => d >= 0);
+    const avgDecisionDays = days.length ? Math.round(days.reduce((a, b) => a + b, 0) / days.length) : null;
+
+    // Number of distinct author names listed on published papers.
+    const authorNames = new Set(
+      (await prisma.paper.findMany({ where: { status: 'PUBLISHED' }, select: { authors: true } }))
+        .flatMap((p) => normalizeAuthors(p.authors).map((a) => a.name.toLowerCase())),
     );
 
-    const countriesCount = uniqueCountries.size;
-
-    // Average days from submission to acceptance
-    const decisions = await prisma.editorialDecision.findMany({
-      where: {
-        decisionType: 'ACCEPT',
-      },
-      include: {
-        paper: {
-          select: { submissionDate: true },
-        },
-      },
-    });
-
-    const avgDecisionDays =
-      decisions.length > 0
-        ? Math.round(
-            decisions.reduce((acc: number, d: any) => {
-              const days = Math.floor(
-                (d.decisionDate.getTime() - d.paper.submissionDate.getTime()) /
-                  (1000 * 60 * 60 * 24)
-              );
-              return acc + days;
-            }, 0) / decisions.length
-          )
-        : 0;
-
     return successResponse({
-      stats: {
-        papersThisYear,
-        countriesCount,
-        avgDecisionDays,
-      },
+      stats: { papersThisYear, totalPublished, countriesCount, avgDecisionDays, authorsCount: authorNames.size, decisionsSample: days.length },
     });
   } catch (error) {
-    console.error('Stats error:', error);
-    return errorResponse('Internal server error', 500);
+    return handleError(error, 'Stats error');
   }
 }

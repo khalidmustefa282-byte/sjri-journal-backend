@@ -1,27 +1,32 @@
-import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { errorResponse, successResponse, corsHeaders, handleCORS } from '@/lib/utils';
+import { publicPaper } from '@/lib/papers';
+import { handleError, successResponse } from '@/lib/utils';
 
-export async function OPTIONS(request: NextRequest) {
-  return handleCORS(request) || new Response(null, { headers: corsHeaders() });
-}
+export const dynamic = 'force-dynamic';
 
-export async function GET(request: NextRequest) {
+// The current issue = the most recent volume/issue that has published papers.
+export async function GET() {
   try {
-    const papers = await prisma.paper.findMany({
-      where: { status: 'PUBLISHED' },
-      include: {
-        author: {
-          select: { id: true, name: true, affiliation: true, country: true },
-        },
-      },
-      orderBy: { publishedDate: 'desc' },
-      take: 20,
+    const latest = await prisma.paper.findFirst({
+      where: { status: 'PUBLISHED', volume: { not: null }, issue: { not: null } },
+      orderBy: [{ volume: 'desc' }, { issue: 'desc' }, { publishedDate: 'desc' }],
+      select: { volume: true, issue: true },
     });
 
-    return successResponse({ papers });
+    const papers = await prisma.paper.findMany({
+      where: latest ? { status: 'PUBLISHED', volume: latest.volume, issue: latest.issue } : { status: 'PUBLISHED' },
+      orderBy: [{ pages: 'asc' }, { publishedDate: 'desc' }],
+      take: 50,
+    });
+
+    const dates = papers.map((p) => p.publishedDate).filter((d): d is Date => !!d);
+    const year = dates.length ? Math.max(...dates.map((d) => d.getUTCFullYear())) : null;
+
+    return successResponse({
+      issue: latest ? { volume: latest.volume, issue: latest.issue, year } : null,
+      papers: papers.map(publicPaper),
+    });
   } catch (error) {
-    console.error('Fetch publications error:', error);
-    return errorResponse('Internal server error', 500);
+    return handleError(error, 'Current publications error');
   }
 }
