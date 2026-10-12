@@ -61,10 +61,37 @@ if (password.length < 12) {
 
 const prisma = new PrismaClient();
 const hash = await bcrypt.hash(password, 10);
-const user = await prisma.user.upsert({
-  where: { email },
-  update: { password: hash, role: 'ADMIN', name },
-  create: { email, name, password: hash, role: 'ADMIN' },
+
+// Find every account with this email, ignoring capital/small letters
+// (an older website version could create "Name@x.com" and "name@x.com" as two accounts).
+const matches = await prisma.user.findMany({
+  where: { email: { equals: email, mode: 'insensitive' } },
+  include: { _count: { select: { papers: true, reviews: true, decisions: true } } },
+  orderBy: { createdAt: 'asc' },
 });
-console.log(`Admin ready: ${user.email} (id ${user.id}). You can now log in on the website.`);
+
+if (matches.length === 0) {
+  const user = await prisma.user.create({ data: { email, name, password: hash, role: 'ADMIN' } });
+  console.log(`Admin ready: ${user.email} (id ${user.id}). You can now log in on the website.`);
+} else {
+  const owns = (u) => u._count.papers + u._count.reviews + u._count.decisions;
+  // Keep the account that owns the most data (or the oldest one).
+  const keeper = [...matches].sort((a, b) => owns(b) - owns(a))[0];
+  for (const other of matches) {
+    if (other.id === keeper.id) continue;
+    if (owns(other) === 0) {
+      await prisma.user.delete({ where: { id: other.id } });
+      console.log(`Removed duplicate empty account: ${other.email}`);
+    } else {
+      await prisma.user.update({ where: { id: other.id }, data: { password: hash, role: 'ADMIN', name } });
+      console.log(`Also made admin (it has papers/reviews, so it was kept): ${other.email}`);
+    }
+  }
+  const stillTaken = await prisma.user.findFirst({ where: { email, NOT: { id: keeper.id } } });
+  const user = await prisma.user.update({
+    where: { id: keeper.id },
+    data: { password: hash, role: 'ADMIN', name, ...(stillTaken ? {} : { email }) },
+  });
+  console.log(`Admin ready: ${user.email} (id ${user.id}). You can now log in on the website.`);
+}
 await prisma.$disconnect();
