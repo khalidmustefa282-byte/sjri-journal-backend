@@ -1,4 +1,5 @@
 import type { Paper, Review, EditorialDecision, Submission, User } from '@prisma/client';
+import { fileKind } from './storage';
 
 // Shapes paper records for each audience so private details never leak:
 // - public readers: published papers only, no reviews, no internal ids
@@ -68,7 +69,10 @@ const base = (p: PaperWith) => ({
   issue: p.issue,
   pages: p.pages,
   pdfFileName: p.pdfFileName,
-  hasPdf: Boolean(p.pdfUrl),
+  // The current file: a Word manuscript during review, the final PDF once published.
+  hasFile: Boolean(p.pdfUrl),
+  fileType: p.pdfUrl ? (fileKind(p.pdfFileName) ?? fileKind(p.pdfUrl) ?? 'pdf') : null,
+  hasPdf: Boolean(p.pdfUrl) && (fileKind(p.pdfFileName) ?? fileKind(p.pdfUrl)) === 'pdf',
 });
 
 export function publicPaper(p: PaperWith) {
@@ -103,7 +107,9 @@ export function reviewerPaper(p: PaperWith, reviewerId: string) {
     field: p.field,
     status: p.status,
     submissionDate: p.submissionDate,
-    hasPdf: Boolean(p.pdfUrl),
+    hasFile: Boolean(p.pdfUrl),
+    fileType: p.pdfUrl ? (fileKind(p.pdfFileName) ?? fileKind(p.pdfUrl) ?? 'pdf') : null,
+    hasPdf: Boolean(p.pdfUrl) && (fileKind(p.pdfFileName) ?? fileKind(p.pdfUrl)) === 'pdf',
     myReview: own
       ? { id: own.id, decision: own.decision, comments: own.comments, rating: own.rating, submittedDate: own.submittedDate, assignedDate: own.createdAt }
       : null,
@@ -128,7 +134,12 @@ export function editorPaper(p: PaperWith) {
   };
 }
 
-export function pdfDownloadName(p: Pick<Paper, 'id' | 'title' | 'pdfFileName'>) {
+export function pdfDownloadName(p: Pick<Paper, 'id' | 'title' | 'pdfFileName' | 'pdfUrl'>) {
   const slug = p.title.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'paper';
-  return `SJRI-${p.id.slice(-6).toUpperCase()}-${slug}.pdf`;
+  const ext = fileKind(p.pdfFileName) ?? fileKind(p.pdfUrl) ?? 'pdf';
+  return `SJRI-${p.id.slice(-6).toUpperCase()}-${slug}.${ext}`;
+}
+
+export function isPdfPaper(p: Pick<Paper, 'pdfFileName' | 'pdfUrl'>) {
+  return Boolean(p.pdfUrl) && (fileKind(p.pdfFileName) ?? fileKind(p.pdfUrl)) === 'pdf';
 }

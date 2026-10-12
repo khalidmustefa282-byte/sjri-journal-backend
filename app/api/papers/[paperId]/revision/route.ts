@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { authorPaper } from '@/lib/papers';
-import { savePdf, validatePdf } from '@/lib/storage';
+import { saveFile, validateManuscript } from '@/lib/storage';
 import { HttpError, handleError, readForm, requireUser, str, successResponse } from '@/lib/utils';
 
 // Author uploads a revised manuscript after the editor requested revisions.
@@ -14,16 +14,16 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (paper.status !== 'REVISIONS_REQUESTED') throw new HttpError('Revisions can only be uploaded after the editor has requested them.', 409);
 
     const form = await readForm(request);
-    const pdf = validatePdf(form.get('pdf'), true)!;
+    const doc = validateManuscript(form);
     const notes = str(form.get('notes'), 5000) || null;
-    const pdfUrl = await savePdf(pdf, 'submissions');
+    const pdfUrl = await saveFile(doc, 'submissions');
     const version = `v${paper.submissions.length + 1}`;
 
     const updated = await prisma.paper.update({
       where: { id: paper.id },
       data: {
         pdfUrl,
-        pdfFileName: pdf.name.slice(0, 200),
+        pdfFileName: doc.name.slice(0, 200),
         status: 'REVISIONS_SUBMITTED',
         submissions: { create: { version, status: 'RECEIVED', notes } },
       },

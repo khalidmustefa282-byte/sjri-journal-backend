@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { editorPaper, parseAuthorsField, parseKeywords } from '@/lib/papers';
-import { savePdf, validatePdf } from '@/lib/storage';
+import { editorPaper, isPdfPaper, parseAuthorsField, parseKeywords } from '@/lib/papers';
+import { saveFile, validatePdf } from '@/lib/storage';
 import { HttpError, handleError, optionalDate, optionalInt, readForm, requireUser, str, successResponse } from '@/lib/utils';
 
 // Publish a finished paper in one step: the editor/admin uploads the final PDF with its details.
@@ -23,8 +23,9 @@ export async function POST(request: NextRequest) {
       const existing = await prisma.paper.findUnique({ where: { id: paperId } });
       if (!existing) throw new HttpError('Paper not found.', 404);
       if (!['ACCEPTED', 'SCHEDULED', 'PUBLISHED'].includes(existing.status)) throw new HttpError('Only accepted or scheduled papers can be published.', 409);
-      const pdf = validatePdf(form.get('pdf'), !existing.pdfUrl);
-      const pdfUrl = pdf ? await savePdf(pdf, 'published') : existing.pdfUrl;
+      // The author's file is a Word document, so a final PDF is required unless one was already uploaded.
+      const pdf = validatePdf(form.get('pdf'), !isPdfPaper(existing));
+      const pdfUrl = pdf ? await saveFile(pdf, 'published') : existing.pdfUrl;
       const [, paper] = await prisma.$transaction([
         prisma.editorialDecision.create({ data: { paperId, decisionType: 'PUBLISH', decidedBy: user.id, notes: str(form.get('notes'), 5000) || null } }),
         prisma.paper.update({
@@ -43,7 +44,7 @@ export async function POST(request: NextRequest) {
     if (!title || !abstract || !field) throw new HttpError('Title, abstract and research field are required.');
     if (!authors) throw new HttpError('Add at least one author with a name.');
     const pdf = validatePdf(form.get('pdf'), true)!;
-    const pdfUrl = await savePdf(pdf, 'published');
+    const pdfUrl = await saveFile(pdf, 'published');
 
     const paper = await prisma.paper.create({
       data: {

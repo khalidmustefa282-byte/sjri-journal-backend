@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { Decision, PaperStatus, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { isPdfPaper } from '@/lib/papers';
 import { HttpError, handleError, optionalDate, optionalInt, readJson, requireUser, str, successResponse } from '@/lib/utils';
 
 const NEXT_STATUS: Record<Decision, PaperStatus> = {
@@ -48,7 +49,7 @@ export async function POST(request: NextRequest) {
       if (pages) update.pages = pages;
       if (doi) update.doi = doi;
       if (decision === 'PUBLISH') {
-        if (!paper.pdfUrl) throw new HttpError('Upload the final PDF before publishing.', 409);
+        if (!isPdfPaper(paper)) throw new HttpError('Upload the final PDF to publish this paper (the author\'s file is a Word document).', 409);
         update.publishedDate = optionalDate(body.publishedDate, 'Publication date') ?? new Date();
       } else {
         // For SCHEDULE, publishedDate holds the planned publication date (shown on the schedule).
