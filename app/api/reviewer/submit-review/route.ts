@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { ReviewDecision } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { notifyReviewSubmitted } from '@/lib/notify';
 import { HttpError, handleError, optionalInt, readJson, requireUser, str, successResponse } from '@/lib/utils';
 
 const REVIEWABLE = ['UNDER_REVIEW', 'REVISIONS_SUBMITTED', 'SUBMITTED'];
@@ -20,7 +21,7 @@ export async function POST(request: NextRequest) {
 
     const assignment = await prisma.review.findUnique({
       where: { paperId_reviewerId: { paperId, reviewerId: user.id } },
-      include: { paper: { select: { status: true } } },
+      include: { paper: { select: { status: true, title: true } }, reviewer: { select: { name: true } } },
     });
     if (!assignment) throw new HttpError('You have not been assigned to review this paper.', 403);
     if (!REVIEWABLE.includes(assignment.paper.status)) throw new HttpError('This paper is no longer open for review.', 409);
@@ -29,6 +30,8 @@ export async function POST(request: NextRequest) {
       where: { id: assignment.id },
       data: { decision, comments, rating, submittedDate: new Date() },
     });
+    await notifyReviewSubmitted({ id: paperId, title: assignment.paper.title }, assignment.reviewer.name, decision);
+
     return successResponse({ review }, 201);
   } catch (error) {
     return handleError(error, 'Submit review error');

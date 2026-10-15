@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { Decision, PaperStatus, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { isPdfPaper } from '@/lib/papers';
+import { notifyDecision } from '@/lib/notify';
 import { HttpError, handleError, optionalDate, optionalInt, readJson, requireUser, str, successResponse } from '@/lib/utils';
 
 const NEXT_STATUS: Record<Decision, PaperStatus> = {
@@ -31,7 +32,7 @@ export async function POST(request: NextRequest) {
     if (!Object.values(Decision).includes(decision)) throw new HttpError('Unknown decision.');
     const notes = str(body.notes, 10000) || null;
 
-    const paper = await prisma.paper.findUnique({ where: { id: paperId } });
+    const paper = await prisma.paper.findUnique({ where: { id: paperId }, include: { author: { select: { name: true, email: true, role: true } } } });
     if (!paper) throw new HttpError('Paper not found.', 404);
     if (!ALLOWED_FROM[decision].includes(paper.status)) {
       throw new HttpError(`A paper that is ${paper.status.toLowerCase().replace(/_/g, ' ')} cannot be given the decision "${decision.toLowerCase().replace(/_/g, ' ')}".`, 409);
@@ -57,10 +58,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const [editorialDecision] = await prisma.$transaction([
+    const [editorialDecision, updatedPaper] = await prisma.$transaction([
       prisma.editorialDecision.create({ data: { paperId, decisionType: decision, decidedBy: user.id, notes } }),
       prisma.paper.update({ where: { id: paperId }, data: update }),
     ]);
+
+    // Papers created directly by the editorial office have no outside author to notify.
+    if (paper.author && paper.author.role === 'AUTHOR') {
+      await notifyDecision(updatedPaper, paper.author, decision, notes);
+    }
 
     return successResponse({ decision: editorialDecision, status: NEXT_STATUS[decision] }, 201);
   } catch (error) {

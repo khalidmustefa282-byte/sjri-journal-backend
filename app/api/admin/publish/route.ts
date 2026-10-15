@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { editorPaper, isPdfPaper, parseAuthorsField, parseKeywords } from '@/lib/papers';
 import { saveFile, validatePdf } from '@/lib/storage';
+import { notifyDecision } from '@/lib/notify';
 import { HttpError, handleError, optionalDate, optionalInt, readForm, requireUser, str, successResponse } from '@/lib/utils';
 
 // Publish a finished paper in one step: the editor/admin uploads the final PDF with its details.
@@ -20,7 +21,7 @@ export async function POST(request: NextRequest) {
     const doi = str(form.get('doi'), 200) || null;
 
     if (paperId) {
-      const existing = await prisma.paper.findUnique({ where: { id: paperId } });
+      const existing = await prisma.paper.findUnique({ where: { id: paperId }, include: { author: { select: { name: true, email: true, role: true } } } });
       if (!existing) throw new HttpError('Paper not found.', 404);
       if (!['ACCEPTED', 'SCHEDULED', 'PUBLISHED'].includes(existing.status)) throw new HttpError('Only accepted or scheduled papers can be published.', 409);
       // The author's file is a Word document, so a final PDF is required unless one was already uploaded.
@@ -33,6 +34,10 @@ export async function POST(request: NextRequest) {
           data: { status: 'PUBLISHED', volume, issue, pages, doi, publishedDate, pdfUrl, ...(pdf ? { pdfFileName: pdf.name.slice(0, 200) } : {}) },
         }),
       ]);
+      const notes = str(form.get('notes'), 5000) || null;
+      if (existing.status !== 'PUBLISHED' && existing.author?.role === 'AUTHOR') {
+        await notifyDecision(paper, existing.author, 'PUBLISH', notes);
+      }
       return successResponse({ paper: editorPaper(paper) }, 200);
     }
 
