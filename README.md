@@ -15,9 +15,23 @@ That is normal: this project has no web pages. The website is the frontend proje
 | `BLOB_READ_WRITE_TOKEN` | yes | Created automatically when a Vercel Blob store is connected to this project. Without it, PDF uploads return a clear error. |
 | `ALLOWED_ORIGINS` | recommended | Comma-separated website addresses allowed to call the API, e.g. `https://sjrijournal.org,https://www.sjrijournal.org,https://sjri-publish-hub.vercel.app`. If empty, `NEXT_PUBLIC_FRONTEND_URL` / `FRONTEND_URL` are used, then `https://sjri-publish-hub.vercel.app`. |
 | `NEXT_PUBLIC_FRONTEND_URL` | optional | The main website address (also allowed by CORS). |
+| `GMAIL_USER` | for email | The journal Gmail that sends all emails, e.g. `sjrijournal@gmail.com` |
+| `GMAIL_APP_PASSWORD` | for email | 16-character Google **App password** for that Gmail (Google Account → Security → 2-Step Verification → App passwords). Not the normal password. |
+| `EDITORIAL_EMAIL` | optional | Where editorial notifications go (default: `GMAIL_USER`). Comma-separated list allowed. |
+| `SITE_URL` | optional | Website address used in email links (default `https://sjri-publish-hub.vercel.app`). |
 | `ALLOW_VERCEL_PREVIEWS` | optional | `false` to block frontend preview deployments (`sjri-publish-hub-*-khalid-994d.vercel.app`). Allowed by default. |
 
 `.env` files are git-ignored. Never commit them.
+
+## Emails
+
+When Gmail is configured, the site sends:
+- to the editorial inbox: every new submission and revision (Word file attached), and every review received
+- to authors: received, revisions requested, accepted, declined, scheduled, published
+- to reviewers: an invitation when assigned
+- "Forgot password" links (valid 1 hour, one use)
+
+Without Gmail settings the website still works; emails are just skipped.
 
 ## Accounts and roles
 
