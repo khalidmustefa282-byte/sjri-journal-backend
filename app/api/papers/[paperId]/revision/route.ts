@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { authorPaper } from '@/lib/papers';
+import { notifyRevision } from '@/lib/notify';
 import { saveFile, validateManuscript } from '@/lib/storage';
 import { HttpError, handleError, readForm, requireUser, str, successResponse } from '@/lib/utils';
 
@@ -29,6 +30,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       },
       include: { submissions: { orderBy: { submissionDate: 'asc' } }, reviews: true, decisions: true },
     });
+
+    const account = await prisma.user.findUnique({ where: { id: user.id }, select: { name: true, email: true } });
+    if (account) {
+      await notifyRevision({ id: paper.id, title: paper.title }, account, version, notes, {
+        filename: doc.name,
+        content: Buffer.from(await doc.arrayBuffer()),
+        contentType: doc.type || undefined,
+      });
+    }
 
     return successResponse({ paper: authorPaper(updated) }, 201);
   } catch (error) {

@@ -9,6 +9,8 @@
 // are also allowed so preview links work; set ALLOW_VERCEL_PREVIEWS=false to turn that off.
 
 const DEFAULT_ORIGINS = ['https://sjri-publish-hub.vercel.app'];
+// The journal's own domains are always allowed, so the site keeps working as soon as the domain is connected.
+const JOURNAL_ORIGINS = ['https://sjrijournal.ss', 'https://www.sjrijournal.ss', 'https://sjri-publish-hub.vercel.app'];
 const DEV_ORIGINS = ['http://localhost:5173', 'http://localhost:8080', 'http://localhost:3000'];
 const PREVIEW_PATTERN = /^https:\/\/sjri-publish-hub(-[a-z0-9-]+)?-khalid-994d\.vercel\.app$/;
 
@@ -22,7 +24,7 @@ export function allowedOrigins(): string[] {
     .flatMap((value) => value!.split(','))
     .map(normalize)
     .filter((origin) => origin && origin !== '*');
-  const list = configured.length ? configured : DEFAULT_ORIGINS;
+  const list = [...(configured.length ? configured : DEFAULT_ORIGINS), ...JOURNAL_ORIGINS];
   const withDev = process.env.NODE_ENV === 'production' ? list : [...list, ...DEV_ORIGINS];
   return Array.from(new Set(withDev));
 }
